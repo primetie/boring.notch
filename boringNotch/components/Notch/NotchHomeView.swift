@@ -30,13 +30,57 @@ struct AlbumArtView: View {
     let albumArtNamespace: Namespace.ID
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            if Defaults[.lightingEffect] {
-                albumArtBackground
+        let cornerRadius = Defaults[.cornerRadiusScaling]
+            ? MusicPlayerImageSizes.cornerRadiusInset.opened
+            : MusicPlayerImageSizes.cornerRadiusInset.closed
+
+        Button(action: musicManager.openMusicApp) {
+            ZStack(alignment: .bottomTrailing) {
+                artwork(cornerRadius: cornerRadius)
+                    .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
+                    //.overlay(glowOverlay(cornerRadius: cornerRadius))
+                    .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+                appIconOverlay
             }
-            albumArtButton
         }
+        .buttonStyle(.plain)
+        // simple scale animation instead of custom PhaseAnimator
+        .scaleEffect(musicManager.isPlaying ? 1.03 : 1.0)
+        .animation(.spring(response: 0.4, dampingFraction: 0.75, blendDuration: 0), value: musicManager.isPlaying)
     }
+
+    private func artwork(cornerRadius: CGFloat) -> some View {
+        GeometryReader { geo in
+            Image(nsImage: musicManager.albumArt)
+                .resizable()
+                .scaledToFill()
+                .frame(width: geo.size.width, height: geo.size.width)
+                .clipped()
+                .cornerRadius(cornerRadius, antialiased: true)
+                // keep a simple opacity transition when artwork updates
+                .id(musicManager.albumArt) // ensure SwiftUI considers this a content change
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.28), value: musicManager.albumArt)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .drawingGroup(opaque: false)
+    }
+
+    private func glowOverlay(cornerRadius: CGFloat) -> some View {
+        Group {
+            if Defaults[.lightingEffect] {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color(nsColor: musicManager.avgColor).opacity(musicManager.isPlaying ? 0.25 : 0.0))
+                    .blur(radius: 24)
+                    .scaleEffect(1.06)
+                    .allowsHitTesting(false)
+                    .animation(.easeInOut(duration: 0.25), value: musicManager.isPlaying)
+            } else {
+                EmptyView()
+            }
+        }
+            }
 
     private var albumArtBackground: some View {
         Image(nsImage: musicManager.albumArt)
@@ -86,13 +130,13 @@ struct AlbumArtView: View {
             .resizable()
             .aspectRatio(1, contentMode: .fit)
             .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
-            .clipped()
-            .clipShape(
-                RoundedRectangle(
-                    cornerRadius: Defaults[.cornerRadiusScaling]
-                        ? MusicPlayerImageSizes.cornerRadiusInset.opened
-                        : MusicPlayerImageSizes.cornerRadiusInset.closed)
-            )
+        .clipped()
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: Defaults[.cornerRadiusScaling]
+                    ? MusicPlayerImageSizes.cornerRadiusInset.opened
+                    : MusicPlayerImageSizes.cornerRadiusInset.closed)
+        )
     }
 
     @ViewBuilder
@@ -241,7 +285,7 @@ struct MusicControlsView: View {
     private func slotView(for slot: MusicControlButton) -> some View {
         switch slot {
         case .shuffle:
-            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .red : .primary, scale: .medium) {
+            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .red : .white, scale: .medium) {
                 MusicManager.shared.toggleShuffle()
             }
         case .previous:
@@ -291,7 +335,7 @@ struct MusicControlsView: View {
     private var repeatIconColor: Color {
         switch musicManager.repeatMode {
         case .off:
-            return .primary
+            return .white
         case .all, .one:
             return .red
         }
@@ -314,7 +358,7 @@ struct FavoriteControlButton: View {
     }
 
     private var iconColor: Color {
-        musicManager.isFavoriteTrack ? .red : .primary
+        musicManager.isFavoriteTrack ? .red : .white
     }
 }
 
@@ -333,7 +377,8 @@ struct VolumeControlView: View {
     @State private var dragging: Bool = false
     @State private var showVolumeSlider: Bool = false
     @State private var lastVolumeUpdateTime: Date = Date.distantPast
-    private let volumeUpdateThrottle: TimeInterval = 0.1
+    @State private var volumeUpdateTask: Task<Void, Never>?
+    private let volumeUpdateThrottle: Duration = .milliseconds(200)
     
     var body: some View {
         HStack(spacing: 4) {
@@ -363,10 +408,12 @@ struct VolumeControlView: View {
                         MusicManager.shared.setVolume(to: newValue)
                     },
                     onDragChange: { newValue in
-                        let now = Date()
-                        if now.timeIntervalSince(lastVolumeUpdateTime) > volumeUpdateThrottle {
-                            MusicManager.shared.setVolume(to: newValue)
-                            lastVolumeUpdateTime = now
+                        volumeUpdateTask?.cancel()
+                        volumeUpdateTask = Task {
+                            try? await Task.sleep(for: volumeUpdateThrottle)
+                            if !Task.isCancelled {
+                                MusicManager.shared.setVolume(to: newValue)
+                            }
                         }
                     }
                 )
@@ -387,16 +434,8 @@ struct VolumeControlView: View {
                 }
             }
         }
-        .onChange(of: showVolumeSlider) { _, isShowing in
-            if isShowing {
-                // Sync volume from app when slider appears
-                Task {
-                    await MusicManager.shared.syncVolumeFromActiveApp()
-                }
-            }
-        }
         .onDisappear {
-            // volumeUpdateTask?.cancel() // No longer needed
+            volumeUpdateTask?.cancel()
         }
     }
     

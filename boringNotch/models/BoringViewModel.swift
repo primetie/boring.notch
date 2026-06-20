@@ -219,10 +219,10 @@ class BoringViewModel: NSObject, ObservableObject {
     }
 
     func closeHello() {
-        Task { @MainActor in
-            withAnimation(animationLibrary.animation) {
-                coordinator.helloAnimationRunning = false
-                close()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+            self?.coordinator.firstLaunch = false
+            withAnimation(self?.animationLibrary.animation) {
+                self?.close()
             }
         }
     }

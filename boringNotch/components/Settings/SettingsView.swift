@@ -143,6 +143,7 @@ struct GeneralSettings: View {
     @Default(.nonNotchHeightMode) var nonNotchHeightMode
     @Default(.notchHeight) var notchHeight
     @Default(.notchHeightMode) var notchHeightMode
+    @Default(.notchWidth) var notchWidth
     @Default(.showOnAllDisplays) var showOnAllDisplays
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
     @Default(.enableGestures) var enableGestures
@@ -254,6 +255,13 @@ struct GeneralSettings: View {
                         NotificationCenter.default.post(
                             name: Notification.Name.notchHeightChanged, object: nil)
                     }
+                }
+                Slider(value: $notchWidth, in: 20...250, step: 1) {
+                    Text("Notch width - \(notchWidth, specifier: "%.0f")")
+                }
+                .onChange(of: notchWidth) {
+                    NotificationCenter.default.post(
+                        name: Notification.Name.notchWidthChanged, object: nil)
                 }
             } header: {
                 Text("Notch sizing")
@@ -467,30 +475,23 @@ struct HUD: View {
     @Default(.inlineHUD) var inlineHUD
     @Default(.enableGradient) var enableGradient
     @Default(.optionKeyAction) var optionKeyAction
-    @Default(.hudReplacement) var hudReplacement
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @State private var accessibilityAuthorized = false
-    
     var body: some View {
         Form {
             Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Replace system HUD")
-                            .font(.headline)
-                        Text("Replaces the standard macOS volume, display brightness, and keyboard brightness HUDs with a custom design.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 40)
-                    Defaults.Toggle("", key: .hudReplacement)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.large)
-                    .disabled(!accessibilityAuthorized)
+                Defaults.Toggle(key: .hudReplacement) {
+                   Text("Replace system HUD")
                 }
-                
+                .disabled(!accessibilityAuthorized)
+                .help("Enable Accessibility in System Settings → Privacy & Security → Accessibility")
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    Task { @MainActor in
+                        let helper = await XPCHelperClient.shared.isAccessibilityAuthorized()
+                            accessibilityAuthorized = helper
+                        }
+                    }
+
                 if !accessibilityAuthorized {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Accessibility access is required to replace the system HUD.")
@@ -499,6 +500,7 @@ struct HUD: View {
 
                         HStack(spacing: 12) {
                             Button("Request Accessibility") {
+                                // Use unsandboxed XPC helper if available so the system prompt is shown
                                 XPCHelperClient.shared.requestAccessibilityAuthorization()
                             }
                             .buttonStyle(.borderedProminent)
@@ -506,48 +508,15 @@ struct HUD: View {
                     }
                     .padding(.top, 6)
                 }
-            }
-            
-            Section {
                 Picker("Option key behaviour", selection: $optionKeyAction) {
                     ForEach(OptionKeyAction.allCases) { opt in
                         Text(opt.rawValue).tag(opt)
                     }
                 }
-                
-                Picker("Progress bar style", selection: $enableGradient) {
-                    Text("Hierarchical")
-                        .tag(false)
-                    Text("Gradient")
-                        .tag(true)
-                }
-                Defaults.Toggle(key: .systemEventIndicatorShadow) {
-                    Text("Enable glowing effect")
-                }
-                Defaults.Toggle(key: .systemEventIndicatorUseAccent) {
-                    Text("Tint progress bar with accent color")
-                }
+                .pickerStyle(.radioGroup)
             } header: {
                 Text("General")
             }
-            .disabled(!hudReplacement)
-            
-            Section {
-                Defaults.Toggle(key: .showOpenNotchHUD) {
-                    Text("Show HUD in open notch")
-                }
-                Defaults.Toggle(key: .showOpenNotchHUDPercentage) {
-                    Text("Show percentage")
-                }
-                .disabled(!Defaults[.showOpenNotchHUD])
-            } header: {
-                HStack {
-                    Text("Open Notch")
-                    customBadge(text: "Beta")
-                }
-            }
-            .disabled(!hudReplacement)
-            
             Section {
                 Picker("HUD style", selection: $inlineHUD) {
                     Text("Default")
@@ -563,25 +532,28 @@ struct HUD: View {
                         }
                     }
                 }
-                
-                Defaults.Toggle(key: .showClosedNotchHUDPercentage) {
-                    Text("Show percentage")
+                Picker("Progressbar style", selection: $enableGradient) {
+                    Text("Hierarchical")
+                        .tag(false)
+                    Text("Gradient")
+                        .tag(true)
+                }
+                Defaults.Toggle(key: .systemEventIndicatorShadow) {
+                    Text("Enable glowing effect")
+                }
+                Defaults.Toggle(key: .systemEventIndicatorUseAccent) {
+                    Text("Tint progress bar with accent color")
                 }
             } header: {
-                Text("Closed Notch")
+                HStack {
+                    Text("Appearance")
+                }
             }
-            .disabled(!Defaults[.hudReplacement])
         }
         .accentColor(.effectiveAccent)
         .navigationTitle("HUDs")
         .task {
             accessibilityAuthorized = await XPCHelperClient.shared.isAccessibilityAuthorized()
-        }
-        .onAppear {
-            XPCHelperClient.shared.startMonitoringAccessibilityAuthorization()
-        }
-        .onDisappear {
-            XPCHelperClient.shared.stopMonitoringAccessibilityAuthorization()
         }
         .onReceive(NotificationCenter.default.publisher(for: .accessibilityAuthorizationChanged)) { notification in
             if let granted = notification.userInfo?["granted"] as? Bool {
@@ -870,9 +842,19 @@ struct About: View {
                 HStack(spacing: 30) {
                     Spacer(minLength: 0)
                     Button {
-                        if let url = URL(string: "https://github.com/TheBoredTeam/boring.notch") {
-                            NSWorkspace.shared.open(url)
+                        NSWorkspace.shared.open(sponsorPage)
+                    } label: {
+                        VStack(spacing: 5) {
+                            Image(systemName: "cup.and.saucer.fill")
+                                .imageScale(.large)
+                            Text("Support Us")
+                                .foregroundStyle(.white)
                         }
+                        .contentShape(Rectangle())
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        NSWorkspace.shared.open(productPage)
                     } label: {
                         VStack(spacing: 5) {
                             Image("Github")
@@ -880,6 +862,7 @@ struct About: View {
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 18)
                             Text("GitHub")
+                                .foregroundStyle(.white)
                         }
                         .contentShape(Rectangle())
                     }

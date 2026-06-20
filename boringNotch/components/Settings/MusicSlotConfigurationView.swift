@@ -232,15 +232,15 @@ struct MusicSlotConfigurationView: View {
     private func previewIconColor(for slot: MusicControlButton) -> Color {
         switch slot {
         case .shuffle:
-            return musicManager.isShuffled ? .red : .primary
+            return musicManager.isShuffled ? .red : .white
         case .repeatMode:
-            return musicManager.repeatMode != .off ? .red : .primary
+            return musicManager.repeatMode != .off ? .red : .white
         case .favorite:
-            return musicManager.isFavoriteTrack ? .red : .primary
+            return musicManager.isFavoriteTrack ? .red : .white
         case .playPause:
-            return .primary
+            return .white
         default:
-            return .primary
+            return .white
         }
     }
 

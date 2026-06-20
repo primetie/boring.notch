@@ -31,9 +31,7 @@ struct DynamicNotchApp: App {
     var body: some Scene {
         MenuBarExtra("boring.notch", systemImage: "sparkle", isInserted: $showMenuBarIcon) {
             Button("Settings") {
-                DispatchQueue.main.async {
-                    SettingsWindowController.shared.showWindow()
-                }
+                SettingsWindowController.shared.showWindow()
             }
             .keyboardShortcut(KeyEquivalent(","), modifiers: .command)
             CheckForUpdatesView(updater: updaterController.updater)
@@ -85,7 +83,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         MusicManager.shared.destroy()
         cleanupDragDetectors()
         cleanupWindows()
-        XPCHelperClient.shared.stopMonitoringAccessibilityAuthorization()
     }
 
     @MainActor
@@ -305,6 +302,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.setupDragDetectors()
             }
         }
+        
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name.notchWidthChanged, object: nil, queue: nil
+        ) { [weak self]  _ in
+            Task { @MainActor in
+                self?.adjustWindowPosition()
+                self?.setupDragDetectors()
+            }
+        }
 
         NotificationCenter.default.addObserver(
             forName: Notification.Name.automaticallySwitchDisplayChanged, object: nil, queue: nil
@@ -432,6 +438,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         {
             DispatchQueue.main.async {
                 self.showOnboardingWindow(step: .musicPermission)
+            }
+        }
+        if Defaults[.hudReplacement] {
+            Task { @MainActor in
+               let authorized = await XPCHelperClient.shared.isAccessibilityAuthorized()
+                if authorized {
+                    MediaKeyInterceptor.shared.start(requireAccessibility: true, promptIfNeeded: false)
+                } else {
+                    let granted = await XPCHelperClient.shared.ensureAccessibilityAuthorization(promptIfNeeded: false)
+                    if granted {
+                        MediaKeyInterceptor.shared.start(requireAccessibility: true, promptIfNeeded: false)
+                    }
+                }
             }
         }
 
@@ -600,6 +619,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 extension Notification.Name {
     static let selectedScreenChanged = Notification.Name("SelectedScreenChanged")
     static let notchHeightChanged = Notification.Name("NotchHeightChanged")
+    static let notchWidthChanged = Notification.Name("NotchWidthChanged")
     static let showOnAllDisplaysChanged = Notification.Name("showOnAllDisplaysChanged")
     static let automaticallySwitchDisplayChanged = Notification.Name("automaticallySwitchDisplayChanged")
     static let expandedDragDetectionChanged = Notification.Name("expandedDragDetectionChanged")
